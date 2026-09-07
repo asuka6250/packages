@@ -166,6 +166,52 @@ And four parts that carry the machinery rather than decide anything, so there is
 measurement in their own comment rather than by a gate, so a change there is not caught by CI:
 extend `tools/scroll-anchor.mjs` before touching one, or accept that the proof is historical.
 
+**The sweep's own mark has to be a faithful proxy, and `position: sticky` is a way for it not to
+be.** `markAt()` already refuses `#view` and `.cbi-section-descr` for the same underlying reason —
+a candidate whose top cannot move the way the page around it moves makes `after.top - before.top`
+answer a question that is not "did the reader move". A sticky element's top is a third such
+candidate: pinned to its stuck offset for as long as it stays stuck, so a mark that lands on one
+measures the stick state, not the reader. Task 0177 found this live rather than by inspection — a
+run on `owrtsnap @1440 side compact` landed its mark on `th.th`, the sidebar's own sticky table
+header (`theme/30-tables.css`), where `owrt2512` landed on `td.td` for the same page and point. It
+did not fire there (`headerWasPinned=true, tableTop=-166`, moved 0 across every repeat), which is
+why the finding itself needed no fix; the trap was that nothing made that true on purpose. A
+synthetic sticky header reproduces the failure directly: `markAt()` without the guard read
+`rect.top` as 0 on every growth from 0 to 120px, while a plain sibling at the same point moved with
+the page — a mark there would pass however badly the theme failed. `markAt()` now walks each
+candidate's ancestors up to `#view` and skips one with `position: sticky` anywhere in that chain,
+the same "detect and reject" shape as the other two exclusions, in both copies of the function
+(`HOLD` and `SWAP`) since both pick a mark the same way.
+
+**A `clamped 0px` in CI cannot say, by itself, whether the engine declined to anchor or the mark
+misreported — task 0178.** A finding reproduced 2 of 2 on CI and 0 of 3 locally, a full webkit sweep
+included, and the printed line — `floor alone: clamped 0px, reader 120px` — has only one number
+that could tell those two apart, and it was never printed: `after.pos - before.pos` for the swap,
+the offset the scroller was actually asked to move by. A healthy floor-off pass shows the whole
+120px of growth arriving there (the engine compensating for real); a pass where the engine simply
+never engaged would print the same `clamped 0px` while this term stayed at 0 too. Both `swap()`
+passes (corrected and floor-alone) now report it, printed beside the field it disambiguates rather
+than added as a new field CI output has to be re-read to notice — `[offset +120]` next to `swap
+moved 0px`, `[offset +120]` next to `reader 120px`. The anchor node's own identity (which element
+`fs-fit.js` chose to hold the line, which is the other unverified half of the same CI-only report)
+is not in this line: `fs-fit.js` remembers it in a private `_rest.el` and exports no accessor, so
+reaching it costs an export this task did not add — recorded rather than reached.
+
+**A cell can report `swap moved 0px` while measuring nothing, and that is worse than a wrong
+number — task 0178.** `SWAP`'s body picker takes the tallest `.cbi-section > div` etc. entirely
+above the reader; on the Overview that can land inside `.fs-ovl`, the grid `fs-overview.js` wraps
+System/Memory/Storage in (`styles/pages/20-overview.css`). The grid sizes a row off its TALLER
+column, so a shorter column can absorb the whole 120px pad without the row, and so the document,
+growing by a pixel — measured live, `div#fs-ovl-panel-0` at 291px on `owrtsnap @900` and again on
+`owrt2410 @1200`, `moved 0` both times, printed exactly like a correction working. The two are
+distinguished the same way as the paragraph above: a real measurement grows the document by close
+to the pad it inserted, so `swap()` now also reports `docH` before and after the refill, and a cell
+where that delta comes back under half the pad folds into `swap.skip` — the same branch "nothing
+above the reader big enough to collapse" already uses, printed as a named skip rather than silently
+joining the pass line. A skip, not an error: the body picker choosing badly on one page shape is not
+a theme fault, and failing the gate over it would be one more thing this file would have to explain
+away on every future run of that cell.
+
 **Two mechanisms were measured here and are no longer in the tree**, and their numbers are the
 reason the revert stops where it does rather than an argument to put them back. `putBack()`
 re-reading where the element landed: −52px on five passes out of five, 0px on five with it.

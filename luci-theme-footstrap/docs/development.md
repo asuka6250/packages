@@ -781,6 +781,46 @@ Two traps sit in the calling convention itself, each cost a retry:
   at its header line with no `.status` file ever appearing, no matter how long `bg-wait.sh` is left
   polling it.
 
+**`owlab.yaml`'s `extra_packages` under `defaults:` reaches every router, including the snapshot
+box, and a package that box cannot resolve fails `owlab up` for the whole lab — not just the
+missing package.** `defaults.extra_packages` merges additively onto whatever a router adds
+(`internal/config/config.go` in owlab, no subtraction syntax), so there is no way to opt a router
+OUT of a list declared in `defaults:`; the only lever is to not put it there. Reproduced 2026-09-07,
+`owlab up --rebuild owrtsnap`: openclash and ssclash need `kmod-tun`, which resolves through a kmods
+index keyed to the box's exact kernel git hash, and `downloads.openwrt.org/snapshots` was not
+currently publishing kmods for the box's baked `6.18.33` hash — `apk add` 404s that index and both
+apps fail to resolve, permanently, until the box's kernel and the live kmods feed happen to agree
+again. justclash carries no kernel module and installed cleanly on the same box, which is why it was
+never in the failure list — same feed, different dependency shape, not a fluke. `owlab up`'s
+non-zero exit here is correct by design (`reportMissingExtras`, owfeed/owlab#18's sibling): it is
+the config asking every router for packages one of them cannot ever have. Fix is in `owlab.yaml`
+itself — declare the three apps once on a release router and alias the list onto the others, leaving
+`owrtsnap` with none, rather than routing them through `defaults:`.
+
+**An ordinary `packages:` entry can go missing on `owrtsnap` too, and it is not the kmod-tun
+mechanism above even though the symptom looks the same — and the entry that goes missing is not
+fixed, so do not name one here as if it were.** Task 0177: a `scroll-anchor` finding on
+`owrtsnap @1440 side compact` traced to the Overview page rendering 12 `.cbi-section` there against
+`owrt2512`'s 13 — `luci-app-https-dns-proxy` absent that day. `apk info -R` shows neither it nor its
+`https-dns-proxy` binary needs a kernel module (`ca-bundle libc libcares libcurl4 libev jsonfilter
+resolveip` only), which rules out the kmods-index gap; `/var/log/apk.log` from that boot instead
+named the KMOD-needing packages failing (`luci-app-mwan3`, `-sqm`, `-nlbwmon`, `-openvpn`,
+`luci-proto-wireguard`/`-openconnect` — the same `ERROR: unable to select packages` the kmods gap
+produces) while `luci-app-https-dns-proxy` installed clean in that same run. By task 0178,
+`https-dns-proxy` installed clean on every stand and `luci-app-mwan3` was the one missing instead
+(no `90_mwan3.js`; the same `unable to select packages` line in `apk.log`, this time for `mwan3`,
+`nlbwmon`, `openvpn` and `sqm` together). Two different names in two sessions IS the finding:
+`feeds/luci` and `feeds/packages` build the snapshot index independently, and a `luci-app-*`/binary
+pair that agrees on version when both are fresh can briefly disagree while one side has moved and
+the other has not mirrored yet — the same class of drift as the kmods index, on an ordinary package
+rather than a kernel module, and not reproducible on demand for that reason. Not fixed by a version
+pin: `owlab.yaml`'s `packages:` list carries no version syntax, and pinning one would go stale as
+the snapshot feed prunes old builds (a release branch keeps them for the branch's life; snapshot
+does not). Check what is missing TODAY rather than trust a name in this paragraph: `apk info -e
+<pkg>` for a `+luci-app-*` in `owlab.yaml`, or `grep 'unable to select' /var/log/apk.log`, on
+`owrtsnap` — before treating a snapshot-only section-count or DOM-count difference as a theme
+finding.
+
 **`mangle-tokens.sh` fails on a `C:\...`-shaped path with `mv: cannot stat ...tmp.NNN`, and the gate
 that surfaces it never mentions the script by name.** Like `build-css.sh`, it needs a POSIX path;
 `tools/size-budget.mjs` calls it and inherits the failure as its own. A failed run also leaves
@@ -1234,6 +1274,80 @@ not whatever is sitting in `dist/`:
 ```sh
 git archive <tag> | tar -x -C /clean/checkout && (cd /clean/checkout && ./tools/stage.sh)
 ```
+
+**A dead feed no longer reds `owrtsnap`'s boot — owlab 0.6.1 made the refresh partial instead of
+fatal, closing the trap this note used to teach around.** Through owlab 0.5.3, stage-3 opened
+`apk update`/`opkg update` under a bare `set -eu`, so one unreachable feed took the whole install
+down before owlab's own per-package loop — already tolerant of a package missing from a feed — got a
+turn; the snapshot rootfs pins its kmods index to a kernel hash the feed's retention window keeps only
+a handful of, so an image a few weeks old 404s on that one sub-index on every run with no code change
+involved (owfeed/owlab#18, closed within the hour; `live`/`anchors` had carried a containment for it,
+`live-snapshot`, `continue-on-error` and absent from `release`'s `needs`, task 0172/0173). `owlab`
+0.6.1's `internal/pkgmgr.UpdateShell` now continues the refresh once at least one feed has answered
+and only aborts when none has — reproduced locally (`owlab up owrtsnap`, `owlab install owrtsnap
+dist/noarch/luci-theme-footstrap-*.apk`, task 0173) against a freshly downloaded `owlab 0.6.1`
+binary, not the WSL install's drifted dev build: the identical 404 still prints
+(`ERROR: wget: exited with error 8` / `unexpected end of file` on
+`kmods/6.18.33-1-70e27cfe28d8cb55760256504e7c02fe/packages.adb`), but the router boots and the
+package installs anyway, and the log now names the gap rather than staying silent about it —
+`owlab: apk update: partial refresh, 7 feed(s) read, 10206 packages available; the feed above did
+not answer and its packages will be missing`. `owrtsnap` is back in `live`/`anchors` and
+`live-snapshot` is gone; what is worth knowing going forward is the shape of that line in a log, not
+how to survive its absence.
+
+**`install.sh` carried the identical trap one layer down, and "packages available > 0" turned out
+not to be the signal that separates a partial refresh from a total one.** Task 0175, run 34112646188:
+`install-check` red on `owrtsnap` at `apk update`, same dead kmods sub-index as above, but this time
+inside the installer's own `set -e`, which had no per-package loop after it to absorb the exit —
+every install on that stand died before the theme was ever fetched. The obvious fix (treat apk's
+own "N unavailable, M stale; K distinct packages available" line as fine whenever K > 0) is wrong:
+with every feed unreachable, apk still printed `8 unavailable, 0 stale; 136 distinct packages
+available` and exited non-zero — those 136 are rows already in the **installed** database, not
+anything the refresh just read, so K is nonzero on a total failure too. What actually separates the
+two is the `N unavailable` count against how many feeds were **configured** to begin with (counted
+from `/etc/apk/repositories` + `/etc/apk/repositories.d/*.list`): `N < configured` means at least one
+feed answered, `N == configured` means none did. opkg prints no such summary line and is affected
+identically (exit 1 with one bad feed of eight on 24.10.8, exit 7 with the network cut), so the same
+comparison is drawn there by counting `Failed to download` lines against the configured
+`distfeeds.conf`/`customfeeds.conf` entries instead. Neither manager's own exit code decides this in
+either implementation — `install.sh`'s `feed_refresh()`.
+
+**That tolerance turned out to be too even-handed: a security review (task 0176) found it let this
+project's OWN feed, `repo.owfeed.org`, be the one silently skipped.** `repo.owfeed.org` is a distinct
+host from every stock OpenWrt feed, so an on-path/DNS attacker can blackhole it alone while the rest
+answer — `_bad < _total`, the old code returned 0, and the script went on to install whatever
+owfeed-packages index apk/opkg already had cached from a prior run while printing "[+] Installed …".
+Reproduced live rather than argued: on `owrt2512` (9 configured feeds) with a `127.0.0.1
+repo.owfeed.org` `/etc/hosts` entry and the 8 stock feeds left open, `apk update` itself reported the
+router's cached copy as merely `stale` (`0 unavailable, 1 stale; 11286 distinct packages available`,
+exit 1) — a shape the OLD counter never even tolerated (`_bad` reads 0, not 1, so the pre-fix code
+already fell through to the generic failure here) but a fresh-index router would read as `unavailable`
+and the old code WOULD tolerate. `feed_refresh()` now checks, before the tolerance, whether `$FEED_HOST`
+— the literal string this same script writes into the repository line a few lines below, not
+`$FEED_NAME` or any label an admin could rename — appears in a failure line (apk: `ERROR:`/`WARNING:`;
+opkg: `Failed to download`, both of which print the full failing URL in real router output, confirmed
+on both managers below). If it does, the refresh fails closed with a message naming this project's own
+feed specifically, regardless of how many other feeds answered. Verified on live stands, all four
+shapes: `owrtsnap`'s real dead kmods sub-index (unrelated host) still tolerates and installs, unchanged
+from the paragraph above; `owrt2512` (apk) and `owrt2410` (opkg) with `repo.owfeed.org` blocked and
+every stock feed open now fail closed with `` `apk/opkg update` could not reach https://repo.owfeed.org
+— this project's own feed`` and install nothing, where the old code's tolerance would have gone on to
+`apk add`/`opkg install` against a stale cache; both routers with every feed healthy install clean, no
+warning; `owrt2512` fully disconnected from its docker network still fails the way it always did,
+naming the unreachable host and refusing rather than claiming success.
+
+**A verification trap worth naming for the next session: opkg's OWN counting is looser than apk's, in
+the other direction.** Blocking `downloads.openwrt.org` (the host behind all 7 of `owrt2410`'s stock
+feeds, `/etc/opkg/distfeeds.conf`) while `repo.owfeed.org` stayed open made `feed_refresh()`'s pre-fix
+`_bad` counter read 14 against 8 configured — opkg logs each unreachable feed on TWO lines that both
+match the substring `Failed to download` (`*** Failed to download the package list from <url>` and
+` * opkg_download: Failed to download <url>, wget returned N.`), so `grep -c 'Failed to download'`
+double-counts every failure. `_bad >= _total` therefore reads as "none answered" even when most did,
+and the refresh fails closed rather than tolerating — safe (it never installs from a worse index than
+it would otherwise refuse), but it makes opkg's tolerance narrower than the comment above claims and
+narrower than apk's, which reads its own reported `N unavailable` count rather than grepping its log.
+Not this task's fix (`install.sh`'s boundary here is the own-feed decision alone, not the general
+counting shape) — flagged for whoever next touches `feed_refresh()`'s opkg branch.
 
 ## The test matrix
 
