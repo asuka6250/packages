@@ -24,24 +24,90 @@ detection exists to avoid.
 reaches it, and how a Safari-only report is reproduced on a machine that has no Safari.
 
 **`overflow-anchor` stopped being able to say "this engine's anchoring can be trusted", the day
-WebKit shipped it too — task wkanchor.** All three now answer `true`, but WebKit's own anchoring can
-still get a tick wrong that grows nothing above the reader at all: parked mid-page with real poll
-ticks landing (`tools/scroll-anchor.mjs`'s `tick` case), the offset still moved — no `scrollTo`, no
-`scrollTop` setter recorded — 21px on the Overview's default park
-(`../tmp/task-overview12/tick-probe.mjs`), 41px at 390 wide in the bar/top layout. `lateDrift()`
-already wrote that back, one rAF plus `SCROLL_IDLE` later — measured 421/421/408ms after the tick —
-which is not wrong, just late enough to read as a jump.
+WebKit shipped it too — task wkanchor.** All three now answer `true`, and parked mid-page with real
+poll ticks landing (`tools/scroll-anchor.mjs`'s `tick` case), the offset still moved on WebKit — no
+`scrollTo`, no `scrollTop` setter recorded — 21px on the Overview's default park
+(`../tmp/task-overview12/tick-probe.mjs`), 41px at 390 wide in the bar/top layout. Task wkanchor read
+that as WebKit's own scroll anchoring getting a real correction wrong and shipped `ENGINE_MISANCHORS`
+(`fs-fit.js`, `-webkit-hyphenate-limit-before`) to turn WebKit's anchoring off on the theme's own
+scroller wherever it fired, `overflow-anchor: none` under `data-fs-anchor-suppress`
+(`theme/20-shell.css`). `lateDrift()` had already been writing the drift back one rAF plus
+`SCROLL_IDLE` later — measured 421/421/408ms after the tick — and the new mechanism was meant to make
+that correction unnecessary rather than merely late.
 
-`ENGINE_MISANCHORS` (`fs-fit.js`) is the second question this now takes, once the first says the
-platform anchors at all: not `overflow-anchor` again (every engine claims it) and not a browser name
-(the same rule as above) — `-webkit-hyphenate-limit-before`, a non-standard WebKit hyphenation
-extension Blink and Gecko have never implemented, answers `false` on Chromium and Firefox and `true`
-on WebKit. `-webkit-touch-callout` was tried first and rejected: it answers `false` on a touch-less
-desktop WebKit build too, so it names a capability rather than the engine and would leave a non-touch
-Safari undetected. Where it answers `true`, `fs-fit.js` writes `data-fs-anchor-suppress` on `:root`
-once, at module eval — `ENGINE_ANCHORS` reads the same flag and returns `false`, taking the
-non-engine correction path for exactly the engine whose own anchoring is being turned off, never for
-one whose anchoring is trusted (below).
+**That diagnosis was wrong — task barpin.** Nothing about WebKit's own anchoring was misfiring: the
+bar itself was moving. `fitChrome()` (fs-chrome.js) pins the bar's box against SHRINKING while it
+measures whether the menu still fits, so the question can be asked with the layout classes off, but
+until this task it pinned only that direction — with the classes off, and again as `fs-bar-stack`/
+`fs-ind-compact` are added back one at a time, the bar's OWN height was free to answer whatever its
+content needed at that instant, up to 107px taller than its settled height, one synchronous pass at a
+time. `fitChrome()` runs once per poll-driven mutation, and the Overview's own poll batches
+System/Memory/Storage into several separate `MutationObserver` callbacks rather than one — so the
+walk landed as a sequence of real, differently-sized boxes with a paint between them, and EVERY
+engine followed it, not only WebKit. Chromium and Firefox hid that behind their own scroll anchoring,
+each correcting its own move before the next one landed; WebKit has no anchoring of its own to hide
+behind, so the walk showed up directly as drift, and `lateDrift()` — built to clean up after an
+anchoring engine's own residual — was instead cleaning up after this. `tools/fit-quiet.mjs`, extended
+to watch the bar's height in both directions rather than only the dip, measured the walk directly:
+230 → 202 → 164 → 144 → 123 → 131 → 123px against a settled 123px, 107px of growth a floor alone
+never sees. `fitChrome()` now pins the bar's height BOTH ways for the whole decision and releases the
+pin only once the final class set is chosen, right before the height is published — nothing the pass
+measures (`stripFitsOneRow()`'s `offsetTop`, `clusterFitsBrandRow()`'s widths) reads the bar's own
+height, so the pin changes nothing about which classes get chosen. With that in place, the same
+probe that measured 21-41px on WebKit reads 0px at 390/top with the suppression removed entirely, 26s
+of real poll ticks (`../tmp/task-toplayout/top-probe.mjs --unsuppress`) — `ENGINE_MISANCHORS` and
+`data-fs-anchor-suppress` are gone from the tree (`fs-fit.js`, `theme/20-shell.css`): there was never
+a WebKit-specific fault for them to hold.
+
+## When the platform check is not enough: `_engineTrusted` (task latenet)
+
+`ENGINE_ANCHORS` answers once, at load, whether the property EXISTS — it cannot see an engine that
+has it but declines to use it on a given refill, which CI showed does happen: two passes where a
+real engine anchored the platform check trusted but left the correction to `lateDrift()`, the
+theme's cleanup path for an anchoring engine's own residual (`lateDrift()`, above). That path is
+built to be a safety net, not the primary corrector, and it answers slowly on purpose: it waits a
+frame, then reads the offset again after `SCROLL_IDLE` (400ms) to make sure the reader has not
+started scrolling in between. Task latenet's four-way SWAP ablation put a number on what that costs
+when the net is actually the one doing the work: `overflow-anchor: none` alone (engine off, theme
+still on the `ENGINE_ANCHORS` path) — `lateDrift()` carries the correction at 419-420ms. Both halves
+suppressed together (`fsEngineAnchor=off` plus the CSS rule, the shape accc451 shipped) —
+`applyAnchor()` carries it at 7ms on chromium/firefox, 32-36ms on webkit. Neither number changed for
+the base case (untouched): the engine corrects itself, 0ms, 3/3 reps on every engine.
+
+So the fork in the mutation observer (`observeContent()`) no longer trusts `ENGINE_ANCHORS` for the
+whole session once the evidence says otherwise. `lateDrift()` already computes the residual after
+every refill the theme did not correct itself; each one it actually has to write back increments
+`_lateMisses`, and once that count reaches `LATE_MISS_LIMIT` (2 — one residual is headroom for a
+single one-off, since a page that corrects at all some of the time is not the same fault as one that
+never does; a second is the count, not a guess), `_engineTrusted` goes false and every later refill
+on that page takes the `anchorFor()` → `scheduleAnchor()` path instead — the one `applyAnchor()`
+measures at 7-36ms rather than `lateDrift()`'s 419-420ms. The comment at the increment site claims
+only what is measured: "this engine did not keep the reference across a container refill, N times on
+this page" — never a browser name, because the count is what is asked, not the identity. Chromium and
+Firefox measure 0 residuals on the pages this sweep covers, so `_lateMisses` never advances for them
+and the switch cannot trip.
+
+**What the gate had to learn to see this at all.** `tools/scroll-anchor.mjs`'s `SWAP` case used to
+read the mark once, at a single fixed delay (800ms), which cannot tell "never corrected" from
+"corrected after the delay had already been long enough to hide it" — the CI failure that opened
+task latenet was exactly that: a `--settle` read at 300ms reported the full drift, the same cell at
+500ms reported 0px, and neither number said whether the correction was fast, late, or absent.
+`swap()` now samples the mark every frame for `SWAP_WINDOW` (900ms — comfortably past the measured
+419-420ms, with margin for a loaded runner) and records `correctedAt`, the first frame the drift
+falls back under `TOLERANCE`. A drift still outside tolerance at the end of the window is reported as
+"never came back"; one that corrected but past `LATE_MS` — 200ms, picked because it sits roughly
+midway between the two measured clusters (7-36ms fast path, 419-420ms slow path) with well over
+150ms of headroom either side, so ordinary CI jitter cannot cross it — is reported as "corrected
+late", a finding in its own right even though the reader ends up in the right place: 420ms of visible
+drift is what a maintainer reading a bug report calls a jump, not a pass. Chromium and Firefox stay
+under 36ms on every cell this sweep reaches, so the threshold does not trip for them either.
+
+**Coverage `SWAP` does not have, and does not claim.** The full CI sweep (`--full`) measures 91 of
+171 cells; 80 are skipped because nothing above the reader on that page/width/layout/density
+combination is big enough to collapse (`nothing above the reader big enough to collapse`, the same
+skip the `.fs-ovl` grid case uses). Widening what `SWAP` can measure — a smaller minimum collapse
+size, or picking a body nearer the fold instead of the tallest one entirely above it — is a change to
+what the case tests, not a flag on top of it, and is out of scope here.
 
 ## The document may not get shorter: `holdFloor()`
 
@@ -99,6 +165,34 @@ was a measured failure first:
   tab the reader clicked is neither. Whether the blank is ever SEEN is release-dependent and the
   mechanism is not: on the 24.10 stand the same v0.14.6 build cleared both floors within 200 ms of
   the switch, something else in that luci-base having mutated `#view`.
+- **And hiding content IN PLACE has to wake the sweep too, not only a tab strip.**
+  `fs-appearance.js`'s `foldable()` OPENS a disclosure by mutating nodes (`refreshColours()`, a
+  childList change the first observer already sees) but CLOSES it by writing `hidden` on the panel
+  and `aria-expanded` on the button only — the same asymmetry as a tab pane, one level down, and it
+  is why the floor only ever grows: /admin/system/footstrap, "Colours", measured 731px before
+  opening, 1485px open, and STAYED at 1485px after closing again, 754px of empty ground still there
+  21s later on a page that never polls (`../tmp/task-spoilerfloor`); "Background" has the same shape
+  at 55px held. **Stock LuCI has it too, wider than the theme:** `form.js`'s `setActive()` — what
+  every `depends()` calls — hides a row by toggling the CLASS `hidden` on the `[data-field]` element,
+  not the attribute, so it wakes nothing that watches attributes alone. System → System, Time
+  Synchronization, unticking "Enable NTP client": 308px of floor held against a 50px bare section,
+  258px of empty ground, unchanged 10s later. `_moTabs` closes both, rather than a fourth
+  `MutationObserver` instance: one more registration on the SAME node replaces the one before it, so
+  `data-tab-active` grows into `attributeFilter: ['data-tab-active', 'hidden', 'aria-expanded',
+  'class']` on the same call, over the same two hosts, instead of paying for a second instance and a
+  second `for` loop over `hosts` — measured at 108 B less minified than a separate observer wired the
+  same way. `hidden` and `aria-expanded` are cheap to watch across the whole subtree — nothing
+  rewrites them on a poll tick — but **`class` is not**: `_moFlag`'s own comment is why watching it
+  unfiltered would call `run()` on every row a tick rewrites. So a `class` record only wakes the
+  sweep where the mutated element itself carries `data-field` (`r.target.dataset.field`, cheaper
+  minified than `hasAttribute()` and just as correct — the value is a cbid, never empty where the
+  attribute is present) — once per delivered record, a property read with no forced layout, not once
+  per poll tick — and `hidden`/`aria-expanded`/`data-tab-active` records wake it unconditionally.
+  `tools/floor-contract.mjs` gained the two triggers this needs (a disclosure open-then-close, a
+  `depends()` row switched off) — its ACCURACY check already caught the discrepancy outright once
+  something exercised it. Cost: 82 B minified over `tools/size-budget.mjs`'s `coldJs` limit (45 B of
+  head-room before this fix), the array and the filter both irreducible without dropping coverage —
+  reported rather than raised, per the budget's own rule.
 
 ## What the reader was looking at: `anchorRef()` and the memo
 
@@ -140,19 +234,47 @@ another correction, which is the shape the reports are about.
 `theme/30-tables.css` sets `overflow-anchor: none` on `.table.fs-dt` — the data tables the fit pass
 re-lays. Without it the engine anchors inside a table whose layout the theme is about to falsify.
 
-`theme/20-shell.css` sets the same property, unconditionally within its own selector list, on
-`html`, `body`, `#maincontent`, `.fs-main`, `#view` and `#view *` — but only under
-`:root[data-fs-anchor-suppress]`, the attribute `ENGINE_MISANCHORS` writes (above). Chromium and
-Firefox never see the attribute and keep anchoring exactly as before; WebKit does, and stops
-anchoring the whole document rather than one table. The selector list is the same one
-`tools/scroll-anchor.mjs` already forces on to test the theme's own correction against a real
-engine's anchoring turned off — carried over rather than narrowed to an unmeasured subset.
+Task wkanchor added the same property, unconditionally within its own selector list, on `html`,
+`body`, `#maincontent`, `.fs-main`, `#view` and `#view *` — under `:root[data-fs-anchor-suppress]`,
+the attribute `ENGINE_MISANCHORS` used to write. Task barpin removed both: the attribute was gating a
+correction for a WebKit fault that was never real (above), so turning the whole document's anchoring
+off under it bought nothing measurable once the actual cause — the bar's own box changing height
+inside `fitChrome()`'s measurement pass — was fixed. `theme/20-shell.css` carries no anchoring rule
+outside the tables one above.
 
 ## Navigation is a different question
 
 `fs-router.js` keeps its own scroll memory (`_scrollMem`, `saveScroll`/`restoreScroll`) so Back
 returns the reader where they were. That is per history entry, not per tick, and none of the above
 applies to it — see [spa-router.md](spa-router.md).
+
+### The scroll reset (task navstamp)
+
+A forward click resets both scrollers to the top — `window.scrollTo(0, 0)` and the same on
+`#maincontent` — because a full load starts the new page there and the in-place swap has to match
+it. That write used to run synchronously at the click, before the staged render, alongside the
+`body[data-page]` stamp `spa-router.md`'s "The staging window" covers. It now runs in the same
+synchronous turn as `commitStage()`, at the swap, instead.
+
+**Measured, with the incoming module's fetch held open 1.2 s so the window is long enough to
+sample** (`../tmp/task-navflash/navflash-slow.mjs`, `owrt2512`): at the click, `y` reached 0 within
+12 ms and stayed there for the whole staging window — the reader, still looking at the OUTGOING
+page (this doc's other corrections are about ITS position not moving; this one is about it moving to
+a position the reader did not choose), found themselves at its top before they had any reason to be.
+Moved to the commit, `y` stays at the reader's own offset — 1878px in the measured run — for the
+entire window and reaches 0 in the same frame the incoming page's content replaces it, matching what
+a full load looks like: one page, one position, both changing together.
+
+**Why this is safe to move and the anchoring corrections above are not touched by it.** Every
+mechanism on this page corrects a scroller that is meant to STAY PUT while the document under it
+grows or shrinks — a poll tick, a floor collapsing, an image loading. A forward navigation is the one
+case that is deliberately going to move the reader, by design, to a page they chose; moving the
+WRITE that does that later does not turn it into a case those mechanisms need to answer for. What
+does have to stay where it is: `fit.forgetRest()`, which merely invalidates the anchoring reference a
+now-superseded page held. That runs at the click, unmoved — the reader is committed to leaving from
+that point on, and a mutation the outgoing page's own poller makes during the staging window (before
+`clearViewIntervals()` runs, later in the same chain) must not be read against a reference that
+belongs to a page about to go away, whether or not the scroll write that follows has happened yet.
 
 ## Is each one still needed
 
@@ -177,15 +299,21 @@ from a theme fault.
 | `scheduleAnchor()` / `applyAnchor()` | 3 findings per scroller with the engine's anchoring off, every one the full 120px of growth: nobody corrects at all | yes, and it is the whole correction on Safari < 26 |
 | `lateDrift()` | 120px on Overview and on Processes, both scrollers, with the engine anchoring | yes — the engine's residual is not small |
 | `ENGINE_ANCHORS` | forcing "no engine anchors" on an engine that does: 120px on Processes | yes — the detection picks the path, and running both corrections is what throws the page the other way |
-| `ENGINE_MISANCHORS` / `data-fs-anchor-suppress` | WebKit's own anchoring left running on a parked reader, real ticks landing, nothing above the reader growing: 21-41px (task wkanchor, `tick` case) | yes — WebKit is trusted by the first question (`overflow-anchor` support) and gets the correction wrong anyway; without this, `lateDrift()` corrects it 421ms late instead of the engine never having moved the offset at all |
+| `_engineTrusted` (task latenet) | an engine that anchors but declines to on a given refill left uncaught by `ENGINE_ANCHORS` (a load-time check) leaves every later correction on `lateDrift()`'s 419-420ms path instead of `applyAnchor()`'s 7-36ms one | yes, once `LATE_MISS_LIMIT` (2) residuals have been measured on the page — not needed, and never trips, where the engine keeps the reference itself (0 residuals measured on chromium/firefox) |
 | the guards on a page in motion (`scrollTop() !== seen`, `_userUntil`) | 6 findings per scroller, on BOTH engines and all three pages: the offset moved on its own mid-flick, worst 185-520px | yes, and it is the only mechanism here that fails on Chromium-class engines too |
 | `anchorRef()` refusing to run while scrolling | nothing measurable | **not measurable here** — it is a cost guard, not a correctness one: every rect read there is a forced layout and this runs on every content mutation |
 | `anchorRef()` refusing `#view` as the reference | nothing on the current pages | **not measurable here.** The hit test is retried across the viewport, so it now finds real content where it used to land in a grid gap; the refusal is what keeps a future layout from silently anchoring on the host, whose own top never moves (drift 0 for ever, half the matrix silently unmeasured when it did) |
 
+`ENGINE_MISANCHORS`/`data-fs-anchor-suppress` is not in the table above — task barpin removed it
+from the tree entirely rather than leaving a row that says "not needed". The 21-41px it was built to
+answer was real (below), but the cause was `fitChrome()`'s own bar changing height inside its
+measurement pass, not WebKit's anchoring; once that pin covers both directions the drift is 0px on
+WebKit with no suppression at all, so there was nothing left for the attribute to gate.
+
 **A correction that is merely LATE reads as "the reader stayed put" to every case that closes before
 it lands — task wkanchor.** `held`/`swapped` insert their own growth and close within 800ms of it;
 `quiet` discards any step where the offset held still for 400ms, since its own subject is a reader
-in motion. WebKit's mis-anchoring is neither: nothing is inserted, the reader is parked, and
+in motion. The fault `tick` was built for is neither: nothing is inserted, the reader is parked, and
 `lateDrift()`'s correction lands 421ms after the tick — past `quiet`'s 400ms-still discard and well
 inside `held`/`swapped`'s 800ms window, but neither of those two ever watches a PARKED reader across
 a REAL tick, only a synthetic one it grew itself. `tick` is the fourth case this shape needed: it
@@ -201,6 +329,13 @@ bar layout proper) — same page, same tick, same engine, `data-layout` still ca
 under the collapse that `held`/`swapped`/`quiet` never needed to know about, since which element
 scrolls is the same either way. `390 top` joins the default (non-`--full`) axis for every case as a
 result, not only `tick`'s own — a regression here would otherwise only be caught on a push or a tag.
+
+`swapped`'s own window is no longer a single read at a fixed delay — see `_engineTrusted` above.
+Task latenet found the same LATE-reads-as-PUT-STILL shape one level down, inside `swapped` itself
+rather than only across the case boundary: a fixed-delay read cannot tell a correction that landed
+late from one that never landed at all, which is what let a real fault pass on one `--settle` and
+fail on another. `swapped` now samples the whole `SWAP_WINDOW` and reports which of the two
+happened, with a stated `LATE_MS` threshold for when "eventually" stops being good enough.
 
 And four parts that carry the machinery rather than decide anything, so there is nothing to ablate:
 
@@ -260,6 +395,24 @@ above the reader big enough to collapse" already uses, printed as a named skip r
 joining the pass line. A skip, not an error: the body picker choosing badly on one page shape is not
 a theme fault, and failing the gate over it would be one more thing this file would have to explain
 away on every future run of that cell.
+
+**`HOLD` reporting `moved -505px` said nothing by itself — task latenet.** The finding was
+`firefox owrt2512 @1440 top compact`, and it was chased for a full round without reproducing: 0 of
+several local attempts came back with anything but a healthy read. The printed line — `reader moved
+-505px` — carries no geometry, only the delta, so there was no way to tell "the correction failed"
+from "the mark ended up somewhere that makes the delta read like a failure for an unrelated reason".
+It turned out to be the second kind: `before.top` reads 503 on every local run, and a mark whose
+`after.top` lands near 0 is the mark sitting at the viewport's own top — a real, different event from
+a page moving under a still reader — not −503px of uncorrected drift. `HOLD` now returns `before` and
+`after` in full, and the sweep prints both (`before.top=… after.top=…`) beside every `moved` value,
+finding or not, so a reading like this one is legible without a follow-up session. It also carries
+`writes`, the scroll-write log an `addInitScript` wrapper records for the whole context (wrapping
+`scrollTo`, `scrollBy`, the `scrollTop` setter and `Element.scrollTo`, borrowed from
+`../tmp/task-holdreg/hold-probe.mjs`), printed on a finding only — the log of who actually wrote the
+scroll position, not just what it ended at. And because one flake in roughly 216 cells (the size of a
+full three-engine sweep) must not fail a run on its own, a `HOLD` reading past `TOLERANCE` is
+re-measured once, on the same page, before it is allowed to become a finding at all; only a reading
+that reproduces on the second pass is reported, with both readings' geometry printed together.
 
 **Two mechanisms were measured here and are no longer in the tree**, and their numbers are the
 reason the revert stops where it does rather than an argument to put them back. `putBack()`

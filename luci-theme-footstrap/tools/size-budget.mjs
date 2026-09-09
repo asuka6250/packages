@@ -362,7 +362,50 @@ const LIMITS = {
 	 * pays it. The commit cost 243 B as written; folding the two `CSS.supports` probes onto one
 	 * helper and the two `data-fs-*` root writes onto another recovered 109 B of that. The limit
 	 * goes to 58,250, 68 B of head-room. */
-	coldJs: 58_250,
+	/* 58,109 B on 2026-09-09, DOWN 101 B — task barpin found the diagnosis behind the raise above
+	 * wrong and reverts it. `fitChrome()` (fs-chrome.js) pinned the bar's `min-height` against
+	 * SHRINKING during its own measurement pass but never against GROWING, so the bar itself
+	 * walked up to 107px taller than its settled height and back inside one synchronous pass —
+	 * measured by extending `tools/fit-quiet.mjs` to watch both directions instead of only the
+	 * dip — and every engine, not only WebKit, paints between the poll's own separate section
+	 * refreshes and follows that walk 1:1. WebKit was never mis-anchoring; it was the one engine
+	 * with no scroll anchoring of its own to absorb what the bar was actually doing. With the bar
+	 * pinned both ways for the pass, the same probe that measured 21-41px on WebKit reads 0px at
+	 * 390/top with NO suppression at all, 26 s of real poll ticks
+	 * (`../tmp/task-toplayout/top-probe.mjs --unsuppress`) — `ENGINE_MISANCHORS` and the
+	 * `data-fs-anchor-suppress` write it drove (fs-fit.js, theme/20-shell.css) are gone. Two parts,
+	 * measured separately: removing `ENGINE_MISANCHORS` and the CSS rule it drove returns 162 B on
+	 * its own; pinning the bar both ways for the pass (fs-chrome.js) costs 61 B back, the real fix
+	 * for the fault the reverted mechanism never actually held. The limit goes to 58,200, 91 B of
+	 * head-room — DOWN from 58,250, because the number it was raised for was never real. */
+	/* 58,455 B on 2026-09-09, up 255 B for the staging window (task navstamp): `body[data-page]`
+	 * was stamped with the INCOMING page's name at the start of every client navigation, and
+	 * `body` is the shared ancestor of the live and the staged render at once, so every
+	 * `styles/pages/*` rule stopped matching the page still on screen — measured at 1407 ms, 33
+	 * rules, +211 px of document and 140 px of reader movement on the Overview, −18 px on the
+	 * package manager (`../tmp/task-navflash/`). The fix gives the two renders two anchors: the
+	 * hidden stage's `#view` carries the incoming name from the moment it exists, the live one
+	 * keeps the outgoing name until `commitStage()` — the two-phase shape `fs-sheets`'
+	 * `scopeToCurrentPage()` already used. The same turn is where `window.scrollTo(0, 0)` moved
+	 * to: it used to fire 12 ms after the click and hold the reader at the top of a page they had
+	 * not left yet. Cheaper shapes were considered and are not available — the sparing has to be
+	 * per-render, and a render that cannot name itself cannot be styled while it is staged. The
+	 * limit goes to 58,500, 45 B of head-room. */
+	/* 58,582 B on 2026-09-09, up 82 B for the hide-in-place sweep (task spoilerfloor): `holdFloor()`
+	 * writes a `min-height` and clears it on the next `run()`, but nothing woke `run()` when content
+	 * was hidden WITHOUT moving a node — `observeContent()` watched childList, `class` on <body> and
+	 * `data-tab-active`, and a fold that only sets `hidden`/`aria-expanded` wakes none of them. The
+	 * floor taken while a section was open simply stayed: measured 731 -> 1485 -> 1485 px on the
+	 * Appearance panel (754 px of empty ground, still there 21 s later on a page that never polls)
+	 * and 308 px against 50 px of content on System -> Time Synchronization after unticking "Enable
+	 * NTP client" — stock LuCI `form.js`, so this reached every user, not only the Appearance panel.
+	 * The existing tab-pane observer was widened rather than a fourth one added — measured: a
+	 * separate observer 223 B, merged and braced 115 B, the shipped form 82 B — and its two parts
+	 * are both load-bearing: the attribute list (~33 B) and the `class` filter narrowed to
+	 * `[data-field]` (~49 B), which is what keeps the poll's per-tick row-class rewrites from waking
+	 * the sweep (`fit-quiet` and the anchor `tick` case both still read 0 px after this). The limit
+	 * goes to 58,650, 68 B of head-room. */
+	coldJs: 58_650,
 };
 
 function bytes(path) {
