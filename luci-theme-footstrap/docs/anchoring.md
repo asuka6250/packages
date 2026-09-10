@@ -432,10 +432,210 @@ across `owrt2512b`, `owrt2410b` and `owrtsnapb` (overview, dhcp, processes; 390/
 one residual finding, on `owrt2410b @390 top overview` — `_engineTrusted` still goes false there
 (a genuine pair of uncompensated growths on that router's specific webkit build, unrelated to any
 floor), but the reader's own position holds at `3x repeat 0px/0px/0px` throughout: a SEPARATE,
-pre-existing fault in the miss-count's own asymmetry (it never cross-checks `compensated` when
-`drift` reads large rather than near-zero) that this task did not touch and left for its own
-investigation. `fit-quiet` (0px peak-to-peak, all widths, all three routers) and `npm run check` are
+pre-existing fault this task did not touch and left for its own investigation — read as the
+miss-count's own asymmetry here, which task close later measured and disproved ("The theme's own
+floor write is what the engine declines for"). `fit-quiet` (0px peak-to-peak, all widths, all three routers) and `npm run check` are
 unaffected: this is additive bookkeeping on a path only a refused `holdFloor()` ever reaches.
+
+## `_rest`'s own baseline goes stale mid-tick — task nine, open
+
+Task wkrefill's own residual note (previous section) named the shape without chasing it: "the
+miss-count's own asymmetry... never cross-checks `compensated` when `drift` reads large rather than
+near-zero." This task traced that asymmetry to its source and found it is wider than the miss-count
+alone.
+
+**The mechanism.** `lateDrift()`'s baseline (`ref`/`settled`, passed in as `_rest` from BEFORE the
+current tick's own `run()`) is only ever refreshed by three things: a WRITE inside `lateDrift()`
+itself (forced, `rememberRest(true)`, task refill2's own fix), `scheduleAnchor()`'s forced call on
+the untrusted path, and — unforced, unconditional, synchronous — `run()`'s own bare `rememberRest()`
+call on EVERY mutation the trusted path does NOT write for. That bare call reads `anchorRef()`'s
+geometry in the SAME microtask as the mutation, before the engine has had a rendering step to react
+— a mid-transition snapshot, not the settled one `lateDrift()` itself takes 420ms later. Where the
+engine settles in one step this is invisible; where it settles gradually (measured live on webkit —
+`scrollTop()` still moving 400-900ms after a mutation, task nine's own instrumented
+`rememberRest()`) it is not, and the mid-transition value becomes the baseline the NEXT mutation's
+own drift is measured against, indistinguishable from a real residual. Confirmed at four call sites:
+`run()`'s own line (the main path), `_moFlag`'s and `_moTabs`'s bare `run()` calls (a poll's own
+request-in-flight class and a `depends()` re-evaluation can each land inside the same tick as a
+growth), and `sampleMotion()`'s deferred-batch `run()`.
+
+**Reproduced directly** (`../tmp/task-nine/probe-overview.mjs`, never synced to a shared stand,
+instrumented copy only): three back-to-back growth/shrink cycles on `/admin/status/overview`,
+webkit/owrt2410. `_rest.at` drifted 60-120px from the offset the reference was actually taken at,
+purely from the ordinary sequence of bare `rememberRest()` calls chasing a still-settling offset —
+`_engineTrusted` tripped false on a section the reader never saw move (the mirror of task missrule's
+own fault: there, the theme's OWN rounding was counted as an engine failure; here, the theme's own
+STALE BASELINE is).
+
+**Two fixes measured, one shipped, one reverted — read before trying either again.**
+
+1. *Refresh `_rest` in `lateDrift()`'s own no-write exits too* (the blind-branch miss, and the plain
+   `drift < 1` return), mirroring task refill2's existing write-path fix, gated on `grow > 1 ||
+   floorShrink > 1` so an uneventful tick pays nothing extra. Low-risk, principled, and measured to
+   change NOTHING on its own (`--only owrt2512,owrt2410,owrtsnap`, all three engines: still 8-10
+   findings, same shapes) — because the very next mutation's own bare `run()` call overwrites
+   whatever this just fixed before it is ever read. **Shipped** (it does not regress anything and the
+   write-path already uses the identical pattern), but it is not the fix on its own.
+2. *Defer `run()`'s own bare call the same way `_anchorPending` already defers it for the untrusted
+   path* — skip the unforced `rememberRest()` on a trusted tick that has a reference to hand
+   `lateDrift()`, at all four call sites above, so lateDrift()'s own settle-verified capture is the
+   ONLY thing that ever touches `_rest` on a tick it is watching. This DID close the specific traced
+   case (`_rest.at` stayed accurate for all three refills in the isolated probe). It also introduced a
+   NEW failure at full-sweep scale that was not visible in the isolated probe: `webkit/owrt2410 @390
+   top overview` reported `refill 1/3 left the reader 120px off (corrected 22ms)` — the engine
+   corrected briefly, then something moved the page the FULL, uncompensated growth away from it,
+   worse than the fault being fixed. Likely cause, not yet confirmed: deferring `run()`'s bare call
+   removes a "self-healing" property it incidentally had — even an imperfect mid-transition snapshot
+   gets overwritten on the NEXT tick, so a reference that went stale for a reason OTHER than this
+   mechanism (this session's own probe runs `REPEAT` after `SWAP`, whose own "floor alone" ablation
+   phase runs with the correction path different from the rest of the sweep) no longer self-corrects
+   and persists into `REPEAT`'s own park. **Reverted** — the sweep as a whole went from 9-10 findings
+   to 9, but with a new, unproven-safe shape among them, which is not the trade this task's acceptance
+   asked for.
+
+**What is not yet tried.** Narrowing the defer to `_lateFrame`'s own pending window rather than
+"trusted + has a reference" unconditionally — measured NOT to help the specific M1→M2 case this task
+traced (`_lateFrame` clears at the top of its own `setTimeout`, ~420ms after the mutation that armed
+it, and the interfering mutation in the traced case arrives ~900ms later, well outside that window)
+without ALSO moving the `_lateFrame = 0` reset to the end of the callback — untried, because it
+changes refusal 1's own timing contract (`lateDrift()`'s doc comment: "one per tick, whichever batch
+armed it first") in a way this task did not have the budget to re-measure against `SWAP`/`TICK`/
+`QUIET` as well as `REPEAT`. The isolated-probe proof above (`../tmp/task-nine/probe-overview.mjs`)
+is scratch, not committed, and the exact shape of the full-sweep regression above was not chased past
+naming it — the next session should reproduce it on its own before trying fix 2 again.
+
+## The sweep's own clamp — task resid
+
+`REPEAT`'s 47-64px residual (two sections up, left open by task nine) is not a reference going stale
+on its own. It starts one pixel at a time, inside `holdFloor()`, and the pixel is the theme's.
+
+**Measured, not reasoned.** An instrumented copy of `fs-fit.js` served by route interception over the
+real gate (`../tmp/task-resid/`, never synced anywhere; the gate itself unmodified apart from a dump
+of the log), chromium/`owrt2512b` `@390 top normal` `/admin/network/dhcp` — the cheapest cell of the
+finding, which reproduces on demand: `3x repeat 0px/-47px/-47px`.
+
+| what | number (`../tmp/task-resid/dbg-before.json`) |
+|---|---|
+| `holdFloor()` sweeps in the run | 38 |
+| of those, document shorter between the clear and the write-back | 33 |
+| of those, the offset went down with it | 13 |
+| … the document came back and the offset did not (this fault) | 8 |
+| … the document stayed shorter, a real shrink clamped for real | 5 |
+| sweeps that moved the offset UP | 0 |
+| corrections `lateDrift()` then refused as "the reader is moving" | 6 |
+
+The eight are the unscoped, every-box sweep `sampleMotion()` runs when the reader is judged still:
+33 boxes cleared at once, document 4730px → **4729px** → 4730px, offset 3886 → **3885** → 3885. The
+floors go back and the document with them; the offset does not. `holdFloor()` clears every floor
+before it measures — that clear is what makes the answers honest (next section) — and for the length
+of the measure pass the document stands without them, one pixel short of what the reader's offset
+needs. The clamp that costs is the floor's own.
+
+**One pixel, and then 59.** `lateDrift()` reads the offset twice, `SCROLL_IDLE` apart, and treats any
+difference as the reader having moved (`scrollTop() !== seen`). The sweep landed six milliseconds
+before that second read, so the tick's own shrink correction — 60px, already computed — was thrown
+away as "the reader is moving" (`late-refuse why: moving, seen 3886, now 3885`), and the unforced
+`rememberRest()` a millisecond later adopted 3885 as the reference the NEXT refill measures against.
+The next refill then measured `drift 10.63` off that wrong ground and wrote `4017`: the reader's own
+mark at -47px, `corrected: never`, `engineTrusted` true throughout — the finding, end to end, with no
+step in it that anything before this task could see.
+
+**The fix is in `holdFloor()`: it puts back the offset its own pass took.** The offset is read before
+the clear, and the scroller's height with it; after the write-back, where the offset is lower AND the
+scroller is as tall again as it was, the pre-sweep offset is written back through `writeOffset()` —
+the same door both corrections use, so the motion sampler reads the restore as this file's own
+(`sawOwnWrite()`) rather than as the reader arriving. Nothing in the function is asynchronous and
+`scrolling()` at its top already refused a moving reader, so an offset that is lower at the end than
+at the start was lowered by this pass and by nothing else.
+
+**Two forms were measured; the narrow one shipped.** Restoring unconditionally — no height test, the
+browser's own clamp doing the separating, since a write above the maximum lands back on the pixel it
+already stands on — is green on this cell too, and 70 B cheaper minified (`fs-fit.js` 8202 B at HEAD,
+8238 B unconditional, 8308 B as shipped). It also turns every genuine
+floor-shrink clamp into this file's own write, so the motion window that clamp used to open stops
+opening and `sampleMotion()`'s terminal sweep stops running behind it: a change to what `scrolling()`
+answers for the whole theme, on a path this task measured one cell of. `scrolling()`'s own contract is
+"the page is moving, whoever moves it", and the height test holds the cell on its own, so the wider
+form does not ship.
+
+**Proof.** The real gate, against the working tree synced to the stand (`owlab sync owrt2512b`), the
+same cell: `3x repeat 0px/0px/0px`, `trusted true->true`, no finding — where the same command on the
+same stand read `refill 2/3 … -47px off (engineTrusted true, corrected never) — writes:
+[{"how":"window.scrollTo","val":4017}]` before it. `SWAP`'s own floor-only ablation on that cell moved
+with it, `clamped -59px, reader -47px` → `clamped 0px, reader 1px`. `tools/floor-contract.mjs`
+(`owrt2512b`, the gate `js.md` names for anything in `holdFloor()`): 62 floors, worst -1px against the
+box, 4 released after emptying, 3 on a tab switch, 5 partial shrinks — unmoved.
+
+**And the sweep around it.** `--only owrt2512b,owrt2410b,owrtsnapb --engines chromium,firefox,webkit`,
+default axes, all three pages: **no `REPEAT` position finding anywhere** — not one refill left the
+reader outside tolerance on any engine, stand or page. The single finding the run does carry is
+`webkit owrt2410b @390 top normal overview: _engineTrusted went false after 3 refills the reader never
+moved for (misses: [true,true,false])` — the same cell, the same shape and the same reader-holds-at-0px
+reading task wkrefill's own Proof already recorded as pre-existing and separate. Untouched here; the
+cause is measured in the next section, and it is not the miss-count asymmetry both earlier sections
+guessed at.
+
+**Cost:** +106 B minified. `coldJs` 60,400 → 60,550 and `resourcesJs` 95,300 → 95,400
+(`tools/size-budget.mjs`, each with the note the raise is written against); the unconditional form's
++36 B fits inside both, and is the only reason the choice above is a trade rather than a preference.
+
+## The theme's own floor write is what the engine declines for — task close, open
+
+The residual the section above leaves — `webkit owrt2410b @390 top normal overview: _engineTrusted
+went false after 3 refills the reader never moved for (misses: [true,true,false])` — is not the
+asymmetry task wkrefill and task nine both guessed at. **The two misses are counted for refills the
+engine really did decline; what makes it decline is this file's own `min-height` write, and no
+narrow rule separating that from a real decline was found. Nothing shipped. Read this before trying
+the miss-count again.**
+
+**The hypothesis on this page until now, disproven.** Both earlier sections named it the same way:
+"the miss count never cross-checks `compensated` when `drift` reads large rather than near-zero".
+Instrumented through the real gate's own code (`../tmp/task-close/`, scratch, never committed and
+never synced to a stand: an instrumented `fs-fit.js` served by route interception, and a copy of
+`tools/scroll-anchor.mjs` carrying that route plus a log dump — the gate in the tree is untouched,
+and reproduces the finding by itself), the two counted misses read
+`drift 120, grow 120, compensated 0` — the cross-check the hypothesis asks for gives ZERO, which is
+"the engine never touched the offset", the one case that IS a miss. The offset stood at 6518 through
+a 120px growth entirely above the reader, and the mark held only because `lateDrift()` wrote the
+120px itself (`out=write/miss`, `wrote 6638`). The gate's own finding text — "the engine was
+anchoring correctly the whole time" — is its inference from the reader not moving, and the reader
+not moving is the theme's correction, not the engine's.
+
+**What the engine is actually doing, measured against the theme with its correction off**
+(`../tmp/task-close/probe2.mjs`, `fsAnchor=off` so the floors and the observer still run and no
+scroll write in the window is the theme's; a 120px pad appended above the fold, 14 add/remove cycles,
+`owrt2410b`/webkit `@390 top`): the engine anchors **every other cycle**, `moved 136 / 0 / 136 / 0 …`,
+and the alternation is indifferent to a programmatic scroll before the mutation — the delays 0, 30,
+100, 300, 600 and 1200ms and the no-scroll control all sit on the same alternating sequence. It is
+not a suppression window after a scroll write, which is what the instrumented gate run made it look
+like.
+
+**The ablation that names the cause.** The same probe against a copy whose `holdFloor()` returns at
+its first line — no floors written at all, everything else identical: **13 of 14 cycles anchored**
+(`moved 136`, one 198, one 0) against 8 of 14 with the floors on. The `min-height` clear-and-rewrite
+this file performs on every `run()` is what costs the engine its adjustment, on roughly half the
+refills, on this page — `holdFloor()`'s own citation for why that write is a scroll-anchor
+invalidation (css-scroll-anchoring-1 §2.2.2) reaching the growth side, where only the SHRINK side is
+excused today (`floorShrink > 1`, task refill2). `owrt2512b` on the same engine and width reads
+`compensated 120` on every refill of the same case, with no theme write anywhere in the run: the
+same code, a different page, and the invalidating write does not coincide with the growth there.
+
+**Why nothing shipped.** The obvious rule — do not count a miss on a tick this file rewrote a floor
+in — is not narrow, it is unconditional: every `run()` sweeps, so the counter would never fire again
+and `_engineTrusted` could never move, which is `LATE_MISS_LIMIT`'s whole purpose. Nothing measured
+here separates the half that suppresses from the half that does not: the floor is written on every
+cycle and the engine anchors on half of them, so "a floor was written" is not the discriminator, and
+neither is "the floor's value changed" (it grows by the pad on both stands, and `owrt2512b` anchors
+anyway). Raising `LATE_MISS_LIMIT` to 3 is tuning a threshold for green and was not tried. The one
+direction not yet measured is making the sweep stop clearing a box whose floor it is about to write
+back unchanged — that touches the "cleared and re-measured, not read off the content" contract six
+measured failures stand behind (next section), and holding it needs the whole sweep, not one cell.
+
+**Impact while it stands.** The reader does not move on this cell — `3x repeat 0px/0px/0px` — because
+the fast path takes over and corrects. What the flip costs is the guarantee `ENGINE_ANCHORS` exists
+for: `anchorFor()`/`scheduleAnchor()` running beside an engine that anchors the OTHER half of the
+refills, which is the "two corrections throw the page the other way" configuration. It has been
+measured not to throw the reader on this cell, and only on this cell.
 
 ## The document may not get shorter: `holdFloor()`
 
@@ -656,6 +856,7 @@ from a theme fault.
 | mechanism | without it | needed |
 |---|---|---|
 | `holdFloor()` | reader moved 568px @390 top and 610px @1440 side; the clamp took 444px and 610px | yes — the largest effect of any of them |
+| `holdFloor()` putting back the offset its own clear pass lost (task resid) | `REPEAT`'s refill 2 or 3 on the same section left the reader -47px off, chromium `@390 top` on `/admin/network/dhcp`, `corrected never` and `engineTrusted` true throughout — every other mechanism here green in the same run | yes — one pixel taken by the sweep is enough for `lateDrift()` to read the page as moving and discard a 60px correction whole |
 | `settleDeferredFloor()` (task wkrefill) | `REPEAT`'s refill 2 or 3 on the same section left the reader 58-60px off on WebKit @390, side and top, every other mechanism above green throughout | yes, and narrowly: the ablation is `holdFloor()`'s own `scrolling()` guard being reached at all — a floored mutation landing while the reader is already moving, which the default axis's first refill does not produce but its second and third routinely do |
 | `scheduleAnchor()` / `applyAnchor()` | 3 findings per scroller with the engine's anchoring off, every one the full 120px of growth: nobody corrects at all | yes, and it is the whole correction on Safari < 26 |
 | `lateDrift()` | 120px on Overview and on Processes, both scrollers, with the engine anchoring | yes — the engine's residual is not small |
